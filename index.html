@@ -303,16 +303,31 @@ footer{margin-top:36px;color:var(--muted);font-size:.8rem;line-height:1.6}
    tolto dalla barra dell'indirizzo e tenuto su questo dispositivo per 21 giorni. ?lang=xx sceglie la lingua. */
 var CHECKIN_URL = null, APRI_ARRIVO = false;
 /* ---------- GUEST PASS PERSONALE ----------
-   Il link porta #gp=<m1>~<m2>&gn=<nome1>~<nome2> (con #ci=… davanti, facoltativo).
-   Ammessi solo i Guest Pass feratel della Val Gardena; tolti dalla barra dell'indirizzo
-   e tenuti su questo dispositivo per 30 giorni. Il #ci=… resta al codice qui sotto.
+   Il link porta #gp=<m1>~<m2>&gn=<nome1>~<nome2>&gr=<reservation_id>~… (con #ci=… davanti, facoltativo).
+   Ammessi solo i Guest Pass feratel della Val Gardena; tolti dalla barra dell'indirizzo e tenuti su questo
+   dispositivo per 30 giorni, legati alla prenotazione (gr, oppure il check-in personale già salvato).
+   Se si apre il link di un'altra prenotazione (#ci=… con un altro reservation_id) i pass non si mostrano e
+   si cancellano: su un dispositivo condiviso un ospite non vede i pass di un altro. Gli ID Slope si
+   confrontano soltanto, mai modificati. Il #ci=… resta al codice qui sotto.
    #reception attiva questo computer come reception (bottone «Invia Guest Pass»), #reception-off lo disattiva. */
 var GUEST_PASSES = [];
 (function(){
   var BASE = 'https://card-mobile-identification.feratel.com/v1/sgp01/mobile?m=';
   var TOKEN = /^[A-Za-z0-9_-]{20,300}$/;
+  var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   var CHIAVE = 'guestpass-personale', DURATA = 30 * 864e5;
   function pulisciNome(s){ return String(s || '').replace(/[<>"'`\\$]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60); }
+  function rDaCi(p){
+    var m = /^ci=([0-9a-f-]{36})~([0-9a-f-]{36})~([0-9a-f-]{36})$/i.exec(p || '');
+    return m && UUID.test(m[3]) ? m[3].toLowerCase() : '';
+  }
+  function rSalvato(){
+    try {
+      var c = JSON.parse(localStorage.getItem('checkin-personale') || 'null');
+      var m = c && typeof c.u === 'string' && /\/reservations\/([0-9a-f-]{36})\/check-in$/i.exec(c.u);
+      return m && UUID.test(m[1]) && typeof c.t === 'number' && Date.now() - c.t < 21 * 864e5 ? m[1].toLowerCase() : '';
+    } catch (e) { return ''; }
+  }
   try {
     if (/^#reception(-off)?$/.test(location.hash)) {
       if (location.hash === '#reception') localStorage.setItem('reception-device', '1');
@@ -325,12 +340,14 @@ var GUEST_PASSES = [];
     if (/^#reception(-off)?$/.test(location.hash)) location.reload();
   });
   try {
-    var h = location.hash;
+    var h = location.hash, rLink = '';
+    h.slice(1).split('&').forEach(function(p){ if (p.indexOf('ci=') === 0) rLink = rDaCi(p); });
     if (/^#(?:[^#]*&)?gp=/.test(h)) {
-      var resto = [], gp = '', gn = '';
+      var resto = [], gp = '', gn = '', gr = '';
       h.slice(1).split('&').forEach(function(p){
         if (p.indexOf('gp=') === 0) gp = p.slice(3);
         else if (p.indexOf('gn=') === 0) gn = p.slice(3);
+        else if (p.indexOf('gr=') === 0) gr = p.slice(3);
         else if (p) resto.push(p);
       });
       var nomi = gn ? gn.split('~') : [], lista = [];
@@ -340,15 +357,24 @@ var GUEST_PASSES = [];
         try { n = pulisciNome(decodeURIComponent(nomi[i] || '')); } catch (e) {}
         lista.push({ n: n, u: BASE + t });
       });
+      var legati = gr.split('~').filter(function(x){ return UUID.test(x); }).map(function(x){ return x.toLowerCase(); }).slice(0, 12);
+      if (!legati.length) { var r0 = rLink || rSalvato(); if (r0) legati = [r0]; }
       if (lista.length) {
-        try { localStorage.setItem(CHIAVE, JSON.stringify({ p: lista, t: Date.now() })); } catch (e) {}
+        try { localStorage.setItem(CHIAVE, JSON.stringify({ p: lista, t: Date.now(), r: legati })); } catch (e) {}
         APRI_ARRIVO = true;
       }
       history.replaceState(null, '', location.pathname + location.search + (resto.length ? '#' + resto.join('&') : ''));
     }
     var v = null;
     try { v = JSON.parse(localStorage.getItem(CHIAVE) || 'null'); } catch (e) {}
-    if (v && Array.isArray(v.p) && typeof v.t === 'number' && Date.now() - v.t < DURATA) {
+    var valido = v && Array.isArray(v.p) && typeof v.t === 'number' && Date.now() - v.t < DURATA;
+    if (valido) {
+      var lr = Array.isArray(v.r) ? v.r.filter(function(x){ return typeof x === 'string'; }) : [];
+      var rOra = rLink || rSalvato();
+      // link di un'altra prenotazione: i pass salvati non sono di questo ospite
+      if (rLink ? lr.indexOf(rLink) === -1 : (rOra && lr.length && lr.indexOf(rOra) === -1)) valido = false;
+    }
+    if (valido) {
       GUEST_PASSES = v.p.filter(function(x){
         return x && typeof x.u === 'string' && x.u.indexOf(BASE) === 0 && TOKEN.test(x.u.slice(BASE.length));
       }).slice(0, 12).map(function(x){ return { n: pulisciNome(x.n), u: x.u }; });
