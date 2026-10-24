@@ -307,7 +307,8 @@ var CHECKIN_URL = null, APRI_ARRIVO = false;
    Ammessi solo i Guest Pass feratel della Val Gardena; tolti dalla barra dell'indirizzo e tenuti su questo
    dispositivo per 30 giorni, legati alla prenotazione (gr, oppure il check-in personale già salvato).
    Se si apre il link di un'altra prenotazione (#ci=… con un altro reservation_id) i pass non si mostrano e
-   si cancellano: su un dispositivo condiviso un ospite non vede i pass di un altro. Gli ID Slope si
+   si cancellano: su un dispositivo condiviso un ospite non vede i pass di un altro. Al contrario, un link Guest Pass
+   appena aperto vale sempre: il check-in salvato di un'altra prenotazione si toglie dal dispositivo. Gli ID Slope si
    confrontano soltanto, mai modificati. Il #ci=… resta al codice qui sotto.
    #reception attiva questo computer come reception (bottone «Invia Guest Pass»), #reception-off lo disattiva. */
 var GUEST_PASSES = [];
@@ -335,9 +336,10 @@ var GUEST_PASSES = [];
       history.replaceState(null, '', location.pathname + location.search);
     }
   } catch (e) {}
-  // #reception scritto a mano su una Directory già aperta: ricarica per attivare
+  // #reception scritto a mano, o un link personale (#gp=… / #ci=…) aperto nella scheda dove la Directory è già aperta:
+  // il browser cambia solo il # senza ricaricare la pagina, quindi si ricarica per leggerlo (e toglierlo dalla barra)
   window.addEventListener('hashchange', function(){
-    if (/^#reception(-off)?$/.test(location.hash)) location.reload();
+    if (/^#reception(-off)?$/.test(location.hash) || /^#(?:[^#]*&)?(?:gp|ci)=/.test(location.hash)) location.reload();
   });
   try {
     var h = location.hash, rLink = '';
@@ -360,6 +362,10 @@ var GUEST_PASSES = [];
       var legati = gr.split('~').filter(function(x){ return UUID.test(x); }).map(function(x){ return x.toLowerCase(); }).slice(0, 12);
       if (!legati.length) { var r0 = rLink || rSalvato(); if (r0) legati = [r0]; }
       if (lista.length) {
+        // link Guest Pass appena aperto: è di chi usa ora il telefono. Un check-in salvato di un'altra prenotazione
+        // è di un altro ospite: si toglie (il suo link non si mostra a chi ha questi pass) e i pass nuovi restano
+        var rPrima = rLink ? '' : rSalvato();
+        if (rPrima && legati.length && legati.indexOf(rPrima) === -1) { try { localStorage.removeItem('checkin-personale'); } catch (e) {} }
         try { localStorage.setItem(CHIAVE, JSON.stringify({ p: lista, t: Date.now(), r: legati })); } catch (e) {}
         APRI_ARRIVO = true;
       }
